@@ -1,0 +1,30 @@
+title: Suspicious intiation of screensaver
+id: 
+description: Detects a .scr file initiated by an abnormal process
+status: experimental
+references:
+    - https://twitter.com/justadrawer2/status/1256437999543267328
+tags:
+    - attack.defense_evasion
+    - attack.t1080
+author: Trent Liffick
+date: 2020/05/05
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+      Image: 
+        - '*\*.scr'
+    filter:
+      ParentImage:
+        - '*\rundll32.exe'
+        - '*\winlogon.exe'
+    condition: selection and not filter
+fields:
+    - Image
+    - CommandLine
+    - ParentCommandLine
+falsepositives:
+  - unknown
+level: medium

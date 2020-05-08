@@ -1,0 +1,28 @@
+title: Wscript or CScript targeting suspicious directory
+id: 
+description: Detects execution of the VBScript engine targeting a file within a suspicious directory
+status: experimental
+references:
+    - https://www.bleepingcomputer.com/news/security/hhsgov-open-redirect-used-by-coronavirus-phishing-to-spread-malware/
+tags:
+    - attack.execution
+    - attack.t1064
+author: Trent Liffick
+date: 2020/05/01
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: 
+            - '*\cscript.exe'
+            - '*\wscript.exe'
+        CommandLine: '*Users\*'
+    condition: selection
+fields:
+    - Image
+    - CommandLine
+    - ParentCommandLine
+falsepositives:
+    - business processes
+level: medium

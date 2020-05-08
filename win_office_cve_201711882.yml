@@ -1,0 +1,33 @@
+title: Office Exploiting CVE-2017-11882
+id: 
+description: Detects exploits that use CVE-2017-11882 to start EQNEDT32.exe from MS Office binaries
+status: experimental
+references:
+    - https://twitter.com/justadrawer2/status/1256437999543267328
+tags:
+    - attack.defense_evasion
+    - attack.t1211
+author: Trent Liffick
+date: 2020/05/05
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+      ParentImage:
+        - '*\winword.exe'
+        - '*\excel.exe'
+        - '*\powerpnt.exe'
+        - '*\mspub.exe'
+        - '*\visio.exe'
+        - '*\outlook.exe'
+      Image: 
+        - '*\eqnedt32.exe'
+    condition: selection
+fields:
+    - Image
+    - CommandLine
+    - ParentCommandLine
+falsepositives:
+  - unknown
+level: critical

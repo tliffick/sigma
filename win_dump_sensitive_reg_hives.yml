@@ -1,0 +1,38 @@
+title: Sensitive registry keys touched by reg
+id: 
+description: Detects export/save of sensitive registry keys
+status: experimental
+references:
+tags:
+    - attack.execution
+    - attack.t1012
+    - attack.t1003
+author: Trent Liffick
+date: 2020/05/05
+logsource:
+    category: process_creation
+    product: windows
+detection:
+  selection1:
+    Image:
+      - '*\reg.exe'
+    CommandLine:
+      - '*export*'
+      - '*save*'
+  selection2:
+    CommandLine:
+      - '*hklm*'
+      - '*hkey_local_machine*'
+  selection3:
+    CommandLine:
+      - '*security*'
+      - '*sam*'
+      - '*system*'
+  condition: selection1 and selection2 and selection3
+fields:
+    - Image
+    - CommandLine
+    - ParentCommandLine
+falsepositives:
+  - Saving reg keys for backups/troubleshooting
+level: medium
