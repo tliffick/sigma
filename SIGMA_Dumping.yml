@@ -1,0 +1,868 @@
+
+# ----------------------------------------------------- #
+# ------ SUSPICIOUS HOOKING HUNT ------- #
+# ---------------------------------------------------- #
+SELECT
+	"Windows-LogSourceServer",
+	devicetime,
+	Image,
+	username,
+	"Process CommandLine"
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	(qid='5001828' or qid='5000862')
+AND
+	Image ilike '%\mavinject.exe'
+AND
+	"Process CommandLine" ilike '%/INJECTRUNNING%')
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# ---------------------------------------------------- #
+# --------- DEVICE CONNECTED HUNT ------ #
+# ---------------------------------------------------- #
+SELECT
+    QIDNAME(qid) AS "Event Name", username, "McAfee-TargetHostName", "McAfee-ThreatEventID", "McAfee-ThreatType", "Signature ID", sourceip, devicetime, count(username) AS 'Occurances'
+FROM
+	events
+WHERE
+ (LOGSOURCETYPENAME(devicetype)='McAfee ePolicy Orchestrator'
+AND
+	(qid = '25250559')) AND "McAfee-ThreatType" IS NOT NULL
+AND NOT
+    REFERENCESETCONTAINS('Contractors - Desktop Support', username)
+GROUP BY
+    username
+HAVING Occurances >= 7
+ORDER BY username
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# ---------------------------------------- #
+# -- Shady Service installation -- #
+# --------------------------------------- #
+SELECT
+	qid,
+	"EventID",
+	ProgramName,
+	"Service Name",
+	"Service Path",
+	"Windows-LogSourceServer"
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	qid='5002197'
+AND
+	(("Service Name" = 'WCESERVICE' or "Service Name" = 'WCE SERVICE')
+OR
+	"Service Name" ilike '%\PAExec%'
+OR
+	"Service Name" ilike 'winexesvc.exe%'
+OR
+	"Service Name" ilike '%\DumpSvc.exe'
+OR
+	"Service Name"='mssecsvc2.0'
+OR
+	"Service Name" ilike '% net user %'
+OR
+	("Service Name" ilike 'pwdump%' or "Service Name" ilike 'gsecdump%' or "Service Name" ilike 'cachedump%')))
+START '<O_START>'
+STOP '<O_STOP>'
+	
+	
+# --------------------------------------------------------------------------------- #
+# ---- Account Tampering - Suspicious Failed Logon Reasons ---- #
+# --------------------------------------------------------------------------------- #	
+SELECT UTF8(payload) as search_payload from events
+where
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+and 
+	(QID = '5000475' or QID = '5000589')
+and
+	("Error Code" = '0xC0000072'
+	-- User logon to account disabled by administrator
+	or
+		"Error Code" = '0xC000006F'
+		-- User logon outside authorized hours
+	or
+		"Error Code" = '0xC0000070'
+		-- User logon from unauthorized workstation
+	or
+		"Error Code" = '0xC0000413'
+		-- Logon Failure: The machine you are logging onto is protected by an authentication firewall. The specified account is not allowed to authenticate to the machine.
+	or
+		"Error Code" = '0xC000018C'))
+		-- The logon request failed because the trust relationship between the primary domain and the trusted domain failed.
+AND
+                    "Target User Name" IMATCHES '^[EeAaTtFfSs]')
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# ------------------------------------------------------------------ #
+# --- Interactive Logon To DOMAIN CONTROLLER --- #
+# ----------------------------------------------------------------- #
+SELECT
+	QID,
+	EventID,
+	"Windows-LogSourceServer",
+	devicetime,
+	"Windows-LogonType",
+	AccountName
+FROM 
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	((QID = '5000830' or QID = '5000475')
+AND
+	"Windows-LogonType"='2'
+AND
+	(referencesetcontains('53 - Domain Controllers - Hostname',"Windows-LogSourceServer"))
+AND NOT
+	("logon_process"='Advapi')))
+	
+	
+# ---------------------------------------------------------- #
+# --- Suspicious Firewall Exception Created  --- #
+# ---------------------------------------------------------- #
+SELECT
+        Image,
+        deviceTime,
+        EventID
+FROM
+        events
+WHERE
+        (LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+        AND
+        "qid"='5001828'
+        AND
+        (Image ilike '%\netsh.exe')
+        AND
+        ("Process CommandLine" ilike '%netsh advfirewall add % program="C:\Users\%\AppData\Local\Temp\%')
+        AND
+        ("Process CommandLine" ilike '%enable=yes'))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# --------------------------------------------------------- #
+# -- Possible Cobalt Strike Process Injection  -- #
+# --------------------------------------------------------- #
+SELECT
+        EventID,
+        deviceTime,
+        "Windows-LogSourceServer" as "source",
+        "SourceImage" as "source",
+        "TargetImage" as "target"
+FROM
+        events
+WHERE
+        (LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+        AND
+        qid='5001845'
+        AND
+        StartAddress ilike '\%0B80')
+START '<O_START>' STOP '<O_STOP>'
+
+
+
+# ----------------------------------------------------------- #
+# -- Suspicious Scheduled Tasks (PolarBear)   -- #
+# ----------------------------------------------------------- #
+SELECT
+	"Process CommandLine",
+	deviceTime,
+	"Windows-LogSourceServer",
+	username,
+	Image
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	qid='5001828'
+AND
+	("Process CommandLine" = 'schtasks')
+AND
+	("Process CommandLine" = '/change')
+AND 
+	("Process CommandLine" = '/TN')
+AND
+	("Process CommandLine" = '/RU') 
+AND
+	("Process CommandLine" = '/RP'))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# --------------------------------------------------------------------- #
+# ------------------- Suspicious VSS usage --------------------- #
+# --------------------------------------------------------------------- # 
+SELECT
+	"Windows-LogSourceServer",
+	"Process CommandLine",
+	'ParentCommandLine',
+	devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+and
+	qid='5001828'
+and
+	("Process CommandLine" = 'vssadmin.exe Delete Shadows'
+ OR 
+	"Process CommandLine" = 'vssadmin create shadow /for=C:'
+ OR 
+	"Process CommandLine" ilike 'copy \\?\GLOBALROOT\Device\\%\windows\ntds\ntds.dit'
+ OR 
+	"Process CommandLine" ilike 'copy \\?\GLOBALROOT\Device\\%\config\SAM'
+ OR 
+	"Process CommandLine" = 'vssadmin delete shadows /for=C:'
+ OR 
+	"Process CommandLine" = 'reg SAVE HKLM\SYSTEM '))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# --------------------------------------------------------------------- #
+# ---- Suspicious CertUtil used to encode files ----------- #
+# --------------------------------------------------------------------- # 	
+SELECT
+	"Windows-LogSourceServer",
+	Image,
+	"Process CommandLine",
+	"EventID",
+	devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	qid='5001828'
+AND
+	("Process CommandLine" ilike 'certutil -f -encode %'
+ OR 
+	"Process CommandLine" ilike 'certutil.exe -f -encode %'
+ OR 
+	"Process CommandLine" ilike 'certutil -encode -f %'
+ OR 
+	"Process CommandLine" ilike 'certutil.exe -encode -f %'))
+START '<O_START>'
+STOP '<O_STOP>'
+
+	
+	
+# --------------------------------------------------------------------- #
+# -----------   DCs touching the NTDS.dit file   -------------- #
+# --------------------------------------------------------------------- # 	
+SELECT
+	QID,
+	EventID,
+	"Windows-LogSourceServer",
+	devicetime,
+	"Windows-LogonType",
+	"Instance-Action",
+	"Instance-File",
+	AccountName
+FROM 
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	((qid='5002536' OR qid='5002238' OR qid='5002176' OR EventID='216')))
+AND
+	(referencesetcontains('53 - Domain Controllers - Hostname',"Windows-LogSourceServer"))
+AND
+    "Instance-File" ILIKE 'NTDS.dit$'
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# ----------------------------------------------------------------------------------- #
+# -----------   Grabbing Sensitive Hives via Reg Utility   -------------- #
+# ----------------------------------------------------------------------------------- # 	
+SELECT
+	"Windows-LogSourceServer",
+    devicetime,
+    Image,
+    username,
+    "Process CommandLine"
+from
+	events
+where
+	((LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+and
+	Image ilike '%\reg.exe'
+and
+	("Process CommandLine" ilike '%save%'
+or
+	"Process CommandLine" ilike '%export%')
+and
+	("Process CommandLine" ilike '%hklm%'
+or
+	"Process CommandLine" ilike '%hkey_local_machine%')
+and
+	("Process CommandLine" ilike '%\system'
+or
+	"Process CommandLine" ilike '%\sam'
+or
+	"Process CommandLine" ilike '%\security')))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+
+
+# ----------------------------------------------------------------------------------- #
+# ------------- Bloodhound and SharpHound Hack Tool --------------- #
+# ----------------------------------------------------------------------------------- # 
+SELECT
+	"Windows-LogSourceServer",
+    devicetime,
+    Image,
+    username,
+    "Process CommandLine"
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+AND
+	(("Image" ilike '%\Bloodhound.exe%'
+ OR 
+	"Image" ilike '%\SharpHound.exe%')
+ OR 
+	("Process CommandLine" ilike '% -CollectionMethod All %'
+ OR 
+	"Process CommandLine" ilike '%.exe -c All -d %'
+ OR 
+	"Process CommandLine" ilike '%Invoke-Bloodhound%'
+ OR 
+	"Process CommandLine" ilike '%Get-BloodHoundData%')
+ OR 
+	("Process CommandLine" ilike '% -JsonFolder %'
+ AND 
+	"Process CommandLine" ilike '% -ZipFileName %')
+ OR 
+	("Process CommandLine" ilike '% DCOnly %'
+ AND 
+	"Process CommandLine" ilike '% --NoSaveCache %')))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+# ----------------------------------------------------------------------------------- #
+# ---------------------- Emotet Process Creation -------------------------- #
+# ----------------------------------------------------------------------------------- # 
+
+SELECT
+	"Windows-LogSourceServer",
+    devicetime,
+    Image,
+    username,
+    "Process CommandLine",
+	'ParentCommandLine'
+from
+	events
+where
+	(LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+ AND 
+	("Process CommandLine" ilike '% -e% PAA%'
+ OR 
+	"Process CommandLine" ilike '%JABlAG4AdgA6AHUAcwBlAHIAcAByAG8AZgBpAGwAZQ%'
+ OR 
+	"Process CommandLine" ilike '%QAZQBuAHYAOgB1AHMAZQByAHAAcgBvAGYAaQBsAGUA%'
+ OR 
+	"Process CommandLine" ilike '%kAGUAbgB2ADoAdQBzAGUAcgBwAHIAbwBmAGkAbABlA%'
+ OR 
+	"Process CommandLine" ilike '%IgAoACcAKgAnACkAOwAkA%'
+ OR 
+	"Process CommandLine" ilike '%IAKAAnACoAJwApADsAJA%'
+ OR 
+	"Process CommandLine" ilike '%iACgAJwAqACcAKQA7ACQA%'
+ OR 
+	"Process CommandLine" ilike '%JABGAGwAeAByAGgAYwBmAGQ%'))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+
+
+# ----------------------------------------------------------------------------------- #
+# ---------- Registry Persistence via Explorer Run Key ----------------- #
+# ----------------------------------------------------------------------------------- # 
+SELECT
+	"Windows-LogSourceServer",
+    Image,
+    'ParentImage',
+    "Target Object",
+    "Target Details",
+    username,
+    devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+AND
+	qid='5001832'
+AND
+	("Target Object" ilike '%\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run'
+OR
+    "Target Object" ilike '%\Microsoft\Windows\CurrentVersion\Policies\Explorer\RunOnce')
+AND
+	("Target Details" ilike 'C:\Windows\Temp\\%'
+OR
+	"Target Details" ilike 'C:\ProgramData\\%'
+OR 
+	"Target Details" ilike '%\AppData\\%'
+OR 
+	"Target Details" ilike 'C:\$Recycle.bin\\%'
+OR 
+	"Target Details" ilike 'C:\Temp\\%'
+OR 
+	"Target Details" ilike 'C:\Users\Public\\%'
+OR
+	"Target Details" ilike 'C:\Users\Default\\%'))
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+
+
+# ------------------------------------------------------------------------------ #
+NAME: Hijack Legit RDP Session to move Laterally 
+Description: Detects non-WMIPRVse loading WMI modules
+   - attack.execution
+   - attack.t1047
+# ------------------------------------------------------------------------------ #	
+SELECT
+	"Windows-LogSourceServer",
+    ImageName,
+    'Filename',
+    "File Path",
+    devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+AND
+	qid='5001830'
+AND
+    (Image='mstsc.exe'
+OR
+    "Filename"='mstsc.exe')
+AND
+    "File Path" ilike '%\Microsoft\Windows\Start Menu\Programs\Startup\%')
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+
+# ----------------------------------------------------------------------------------- #
+# ----------  WINDOWS -- Reset of local admin pwd    ----------------- #
+# ----------------------------------------------------------------------------------- # 
+
+SELECT
+        "Windows-LogSourceServer",
+        "Target User Domain",
+        "Target Account Security ID",
+        username,
+        "Target User Name",
+    devicetime
+FROM
+        events
+WHERE
+        (LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+AND
+        qid='5000895'
+AND
+    "Target User Name" ilike 'wsadmin')
+START '<O_START>'
+STOP '<O_STOP>'
+
+
+
+# ----------------------------------------------------------------------------------- #
+# ----------  WINDOWS -- Potential PassTheHash attack    ----------------- #
+# ----------------------------------------------------------------------------------- # 
+
+    SELECT
+        "Windows-LogSourceServer",
+        Image,
+        "Target Object",
+        "Target Details",
+        devicetime
+    from
+        events
+    where
+        (LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+    AND
+        qid='5001832'
+    AND
+        ("Target Object" = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken'
+    OR
+        "Target Object" = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LocalAccountTokenFilterPolicy'))
+    START '<O_START>'
+    STOP '<O_STOP>'
+
+
+# ------------------------------------------------------------------ #
+TITLE: Suspicious Csc.exe Source File FolderDESCRIPTION:
+Detects a suspicious execution of csc.exe, which uses a source in a suspicious folder (e.g. AppData)  Possible AgentTesla
+   - attack.defense_evasion
+   - attack.t1500
+# ------------------------------------------------------------------ #	
+SELECT
+	"Windows-LogSourceServer",
+	Image,
+	"Process CommandLine",
+	'ParentCommandLine',
+	devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	(Image ilike '%\csc.exe'
+AND
+	("Process CommandLine" ilike '%\AppData\\%' 
+ OR 
+	"Process CommandLine" ilike '%\Windows\Temp\\%'))
+ AND NOT
+	(("ParentImage" ilike 'C:\Program Files%' 
+ OR 
+	"ParentImage" ilike '%\sdiagnhost.exe' 
+ OR 
+	"ParentImage" ilike '%\w3wp.exe')))
+
+
+
+# ------------------------------------------------------------------ #
+TITLE: Execution in Non-Executable FolderDESCRIPTION: Detects a suspicious execution form an uncommon folder
+   - attack.defense_evasion
+   - attack.t1036
+# ------------------------------------------------------------------ #	
+	SELECT
+		"Windows-LogSourceServer",
+		Image,
+		"Process CommandLine",
+		'ParentCommandLine',
+		devicetime
+	FROM
+		events
+	WHERE
+		(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+	AND
+		qid='5001828'
+	AND
+		(Image ilike '%\$Recycle.bin'
+	 OR
+		Image ilike '%\Users\All Users\%'
+	 OR
+		Image ilike '%\Users\Default\%'
+	 OR
+		Image ilike '%\Users\Public\%'
+	 OR
+		Image ilike 'C:\Perflogs\%'
+	 OR
+		Image ilike '%\config\systemprofile\%'
+	 OR
+		Image ilike '%\Windows\Fonts\%'
+	 OR
+		Image ilike '%\Windows\IME\%'
+	 OR
+		Image ilike '%\Windows\addins\%'))
+
+
+# ------------------------------------------------------------------------------ #
+NAME: WMI Modules loaded
+Description: Detects non-WMIPRVse loading WMI modules
+   - attack.execution
+   - attack.t1047
+   - sysmon
+# ------------------------------------------------------------------------------ #
+SELECT           "Windows-LogSourceServer",
+	'Image'
+	'ImageLoaded',
+	'MD5 Hash',
+	devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) ilike '%Microsoft Windows Security Event Log%'
+AND
+	(qid='5001844'
+AND
+	("ImageLoaded" ilike '%\wmiclnt.dll'
+OR
+	"ImageLoaded" ilike '%\WmiApRpl.dll'
+OR
+	"ImageLoaded" ilike '%\wmiprov.dll'
+OR
+	"ImageLoaded" ilike '%\wmiutils.dll'
+OR
+	"ImageLoaded" ilike '%\wbemcomn.dll'
+OR
+	"ImageLoaded" ilike '%\wbemprox.dll'
+OR
+	"ImageLoaded" ilike '%\WMINet_Utils.dll'
+OR
+	"ImageLoaded" ilike '%\wbemsvc.dll'
+OR
+	"ImageLoaded" ilike '%\fastprox.dll'))
+AND NOT
+	(("Image" ilike '%\WmiPrvSe.exe'
+OR
+	"Image" ilike '%\WmiPrvSE.exe'
+OR
+	"Image" ilike '%\WmiAPsrv.exe'
+OR
+	"Image" ilike '%\svchost.exe')))
+
+
+
+# ----------------------------------------------------------- #
+Title: Detects Persistence Registry Mechanisms
+Description: Detects persistence registry keys
+    - attack.privilege_escalation
+    - attack.persistence
+    - attack.defense_evasion
+    - attack.t1183
+# ------------------------------------------------------------ #
+SELECT 
+    "Windows-LogSourceServer",
+	devicetime,
+	Image,
+	"Target Object",
+	"Target Details"
+	username,
+	"Process CommandLine"
+from
+	events
+where
+	(LOGSOURCETYPENAME(devicetype) ilike '%Microsoft Windows Security Event Log%'
+and
+	qid='5001832'
+and
+	("Target Object" ilike '%\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\\%\GlobalFlag'
+or
+	"Target Object" ilike '%\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit\\%\ReportingMode'
+or
+	"Target Object" ilike '%\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit\\%\MonitorProcess'))
+
+
+
+# --------------------------------------------------------------------------- #
+Title: Suspicious WMI Commands
+Description: Detects WMI executing suspicious commands
+
+# --------------------------------------------------------------------------- #	
+               SELECT
+                        "Windows-LogSourceServer",
+                        "Image",
+                        "Process CommandLine",
+                        ParentCommandLine,
+                        Username,
+                        devicetime
+                from
+                        events
+                where
+                        (LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+                and
+                        qid='5001828'
+                and
+                        (Image ilike '%\wmic.exe')
+                and
+                        ("Process CommandLine" ilike '%/NODE:%process call create %'
+                or
+                        "Process CommandLine" ilike '% path AntiVirusProduct get %'
+                or
+                        "Process CommandLine" ilike '% path FirewallProduct get %'
+                or
+                "Process CommandLine" ilike '% shadowcopy delete %'))
+
+
+
+# -------------------------------------------------------------------------- #
+Title: WMI DLL Loaded Via Microsoft Office
+Description: Detects DLL's Loaded Via Word Containing VBA Macros Executing WMI Commands
+   - attack.execution   - attack.t1047
+# -------------------------------------------------------------------- #
+SELECT
+	"Windows-LogSourceServer",
+	Image,
+	ImageLoaded,
+	ImageName,
+	Username,
+	devicetime
+from
+	events
+where
+	(LOGSOURCETYPENAME(devicetype) = 'Microsoft Windows Security Event Log'
+and
+	qid='5001844'
+and
+	("Image" ilike '%\winword.exe'
+OR
+	"Image" ilike '%\powerpnt.exe'
+OR
+	"Image" ilike '%\excel.exe'
+OR
+	"Image" ilike '%\outlook.exe')
+AND
+	("ImageLoaded" ilike '%\wmiutils.dll'
+OR
+	"ImageLoaded" ilike '%\wbemcomn.dll'
+OR
+	"ImageLoaded" ilike '%\wbemprox.dll'
+OR
+	"ImageLoaded" ilike '%\wbemdisp.dll'
+OR
+	"ImageLoaded" ilike '%\wbemsvc.dll'))
+
+
+
+# ----------------------------------------------------------------------------------- #
+Title: NEW RUN KEY POINTING TO A SUSPICIOUS FOLDER
+Description: Detects Suspicious new RUN key point to an executable in a suspicious Folder
+    - attack.persistence
+    - attack.t1060
+# ------------------------------------------------------------------------------------- #	
+SELECT
+    "Windows-LogSourceServer",
+	devicetime,
+	Image,
+	"Target Object",
+	"Target Details"
+	username,
+	"Process CommandLine"
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) ilike '%Microsoft Windows Security Event Log%'
+AND
+	(qid='5001832'
+AND
+	("TargetObject" ilike '%\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\\%'
+OR
+	"TargetObject" ilike '%\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce\\%')
+AND
+	("Target Details" ilike '%C:\Windows\Temp\\%'
+OR
+	"Target Details" ilike '%\AppData\\%'
+OR
+	"Target Details" ilike '%AppData%\\%'
+OR
+	"Target Details" ilike '%C:\$Recycle.bin\\%'
+OR
+	"Target Details" ilike '%C:\Temp\\%'
+OR
+	"Target Details" ilike '%C:\Users\Public\\%'
+OR
+	"Target Details" ilike '%Public%\\%'
+OR
+	"Target Details" ilike '%C:\Users\Default\\%'
+OR
+	"Target Details" ilike '%C:\Users\Desktop\\%'
+OR
+	"Target Details" ilike 'wscript%'
+OR
+	"Target Details" ilike 'cscript%'))
+AND
+	not (("Target Details" ilike '%\AppData\Local\Microsoft\OneDrive\%')))
+
+
+
+# -------------------------------------------------------------------------------------- #
+Title: VBScript Engine targeting of file from suspicious location
+Description:  Detects execution of files by cscript/wscript targeting a suspicious location
+    - attack.execution
+    - attack.t1064
+# ----------------------------------------------------------------------- #		
+SELECT
+	"Windows-LogSourceServer",
+	Image,
+	Username,
+	"Parent Process Path",
+	'Process CommandLine',
+	'ParentCommandLine'
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype) ilike '%Microsoft Windows Security Event Log%'
+AND
+	qid='5001828'
+AND
+	("Image" ilike '%\wscript.exe'
+OR
+	"Image" ilike '%\cscript.exe')
+AND
+	"Process CommandLine" ilike '%Users\%')	
+
+
+# ------------------------------------------------------------------------------------------- #
+Title: MS Office Product Spawning Exe in User Dir
+Description: Detects an executable in the users directory started from Microsoft Word, Excel, Powerpoint, Publisher or Visio
+   - attack.execution
+   - attack.defense_evasion
+   - attack.t1059
+   - attack.1202
+# -------------------------------------------------------------------------------------------- #	
+SELECT
+'Process CommandLine',
+'ParentCommandLine'
+FROM
+events
+where
+(LOGSOURCETYPENAME(devicetype) ilike '%Microsoft Windows Security Event Log%'
+AND
+("ParentImage" ilike '%\WINWORD.EXE'
+OR
+"ParentImage" ilike '%\EXCEL.EXE'
+OR
+"ParentImage" ilike '%\POWERPNT.exe'
+OR
+"ParentImage" ilike '%\MSPUB.exe'
+OR
+"ParentImage" ilike '%\VISIO.exe'
+OR
+"ParentImage" ilike '%\OUTLOOK.EXE')
+AND
+("Image" ilike 'C:\users\\%.exe'))
+
+
+# --------------------------------------------------------------------- #
+Title: CertUtil Encoding
+Description: Detects suspicious a certutil command that used to encode files, which is sometimes used for data exfiltration
+# --------------------------------------------------------------------- # 	
+SELECT
+	"Windows-LogSourceServer",
+	Image,
+	"Process CommandLine",
+	"EventID",
+	devicetime
+FROM
+	events
+WHERE
+	(LOGSOURCETYPENAME(devicetype)='Microsoft Windows Security Event Log'
+AND
+	qid='5001828'
+AND
+	("Process CommandLine" ilike 'certutil -f -encode %'
+OR
+	"Process CommandLine" ilike 'certutil.exe -f -encode %'
+OR
+	"Process CommandLine" ilike 'certutil -encode -f %'
+OR
+	"Process CommandLine" ilike 'certutil.exe -encode -f %'))
+
+
+
